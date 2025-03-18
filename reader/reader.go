@@ -3,9 +3,11 @@ package reader
 import (
 	"bufio"
 	"os"
+	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
-// ReadCSV reads a CSV file and sends URLs to a channel.
 func ReadCSV(filePath string, urls chan<- string) error {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -20,10 +22,17 @@ func ReadCSV(filePath string, urls chan<- string) error {
 			firstLine = false
 			continue
 		}
-		urls <- scanner.Text()
+		url := strings.TrimSpace(scanner.Text())
+		if url != "" {
+			urls <- url
+		}
 	}
 	close(urls)
-
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		log.Errorf("Error reading CSV: %v", err)
+		return err
+	}
+	log.Info("CSV file read successfully")
+	return nil
 }
 

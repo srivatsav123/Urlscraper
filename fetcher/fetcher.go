@@ -1,34 +1,32 @@
 package fetcher
 
 import (
-	"fmt"
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
-// URLFetcher defines an interface for fetching data from a URL.
 type URLFetcher interface {
 	Fetch(url string) ([]byte, error)
 }
 
-// HTTPFetcher implements URLFetcher using the net/http package.
 type HTTPFetcher struct {
 	client *http.Client
 }
 
-// NewHTTPFetcher creates an HTTPFetcher with a default timeout.
-func NewHTTPFetcher(timeout time.Duration) *HTTPFetcher {
+func NewHTTPFetcher() *HTTPFetcher {
 	return &HTTPFetcher{
-		client: &http.Client{Timeout: timeout},
+		client: &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
-// Fetch retrieves data from the given URL with retry logic.
 func (h *HTTPFetcher) Fetch(url string) ([]byte, error) {
-	const maxRetries = 3
 	var data []byte
-	var err error
+	maxRetries := 3
 
 	for i := 0; i < maxRetries; i++ {
 		resp, err := h.client.Get(url)
@@ -39,21 +37,29 @@ func (h *HTTPFetcher) Fetch(url string) ([]byte, error) {
 				return data, nil
 			}
 		}
-		fmt.Printf("[WARN] Retrying (%d/%d) for %s due to error: %v\n", i+1, maxRetries, url, err)
-		time.Sleep(2 * time.Second)
+		log.Warnf("Retrying (%d/%d) for %s due to error: %v", i+1, maxRetries, url, err)
+		time.Sleep(time.Second * 2)
 	}
-	return nil, fmt.Errorf("failed after %d retries: %w", maxRetries, err)
+	return nil, errors.New("failed to fetch URL after retries")
 }
 
-// Worker fetches URLs concurrently and sends results to a channel.
-func Worker(fetcher URLFetcher, urls <-chan string, results chan<- []byte, errors chan<- error) {
-	for url := range urls {
-		data, err := fetcher.Fetch(url)
-		if err != nil {
-			errors <- fmt.Errorf("failed to download %s: %v", url, err)
-			continue
+func (h *HTTPFetcher) Worker(ctx context.Context, urls <-chan string, results chan<- []byte, errors chan<- error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case url, ok := <-urls:
+			if !ok {
+				return
+			}
+
+			data, err := h.Fetch(url)
+			if err != nil {
+				errors <- err
+				continue
+			}
+			results <- data
 		}
-		results <- data
 	}
 }
 

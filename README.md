@@ -37,4 +37,13 @@ git clone https://github.com/yourusername/urlscraper.git
 cd urlscraper  
 go mod tidy  
 go build -o urlscraper  
+./urlscraper -file urls.csv -workers 5
+``` 
+
+## Run Test cases  
+
+```sh
+go to respective package say ex:reader 
+go test -v
+```
 

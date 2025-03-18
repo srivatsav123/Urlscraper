@@ -1,45 +1,59 @@
 package main
 
 import (
+	"context"
 	"flag"
-	"fmt"
+	"os"
+	"os/signal"
 	"sync"
-	"time"
-         
-	"Urlscraper/fetcher"
-        "Urlscraper/reader"
-        "Urlscraper/writer"
+	"syscall"
 
+	log "github.com/sirupsen/logrus"
+	"Urlscraper/fetcher"
+	"Urlscraper/reader"
+	"Urlscraper/writer"
 )
 
 func main() {
 	filePath := flag.String("file", "urls.csv", "Path to CSV file containing URLs")
 	maxWorkers := flag.Int("workers", 50, "Maximum number of concurrent downloads")
-	timeout := flag.Int("timeout", 10, "HTTP request timeout in seconds")
 	flag.Parse()
+
+	log.SetFormatter(&log.JSONFormatter{})
+	log.SetOutput(os.Stdout)
+	log.SetLevel(log.InfoLevel)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		log.Warn("Received termination signal. Gracefully shutting down...")
+		cancel()
+	}()
 
 	urls := make(chan string, *maxWorkers)
 	results := make(chan []byte, *maxWorkers)
 	errors := make(chan error, *maxWorkers)
 
-	// Initialize fetcher & writer
-	fetcherInstance := fetcher.NewHTTPFetcher(time.Duration(*timeout) * time.Second)
-	fileWriter := &writer.DiskWriter{}
+	var wg sync.WaitGroup
+	fetcher := fetcher.NewHTTPFetcher()
+	fileWriter := writer.NewDiskWriter()
 
 	// Start reading CSV file
 	go func() {
 		if err := reader.ReadCSV(*filePath, urls); err != nil {
-			fmt.Printf("[ERROR] Failed to read CSV: %v\n", err)
+			log.Errorf("Failed to read CSV: %v", err)
 		}
 	}()
 
-	// Start workers
+	// Start worker goroutines
 	var workerWG sync.WaitGroup
 	for i := 0; i < *maxWorkers; i++ {
 		workerWG.Add(1)
 		go func() {
-			fetcher.Worker(fetcherInstance, urls, results, errors)
-			workerWG.Done()
+			defer workerWG.Done()
+			fetcher.Worker(ctx, urls, results, errors)
 		}()
 	}
 
@@ -49,21 +63,20 @@ func main() {
 		close(results)
 	}()
 
-	// Start writer
-	var writerWG sync.WaitGroup
-	writerWG.Add(1)
-	go writer. ProcessFiles(fileWriter, results, &writerWG)
+	// Start file writer
+	wg.Add(1)
+	go writer.ProcessFiles(fileWriter, results, &wg)
 
 	// Error handling
 	go func() {
 		for err := range errors {
-			fmt.Println("[ERROR]", err)
+			log.Error(err)
 		}
 	}()
 
-	writerWG.Wait()
+	wg.Wait()
 	close(errors)
 
-	fmt.Println("[INFO] All files processed successfully!")
+	log.Info("All files processed successfully!")
 }
 
