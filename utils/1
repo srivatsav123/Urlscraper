@@ -1,0 +1,12 @@
+package utils
+
+import "strings"
+
+// NormalizeURL ensures all URLs include "https://" if missing.
+func NormalizeURL(url string) string {
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		return "https://" + url
+	}
+	return url
+}
+
